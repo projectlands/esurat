@@ -1,1 +1,272 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>Data Ajuan Surat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+  <div class="bg-white w-full max-w-5xl mx-auto p-6 rounded-2xl shadow">
+    
+ <div class="flex items-center justify-between mb-12">
+  <a href="http://localhost/esurat"
+     class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+    Buat Ajuan Surat
+  </a>
+  <h1 class="text-2xl font-bold text-center flex-1">Data Ajuan Surat</h1>
+</div>
 
+     
+
+    <!-- Notifikasi -->
+    <div id="notice" class="hidden mb-4 p-3 rounded border"></div>
+
+    <!-- Filter dan Pencarian -->
+    <div class="mb-6 flex flex-col md:flex-row gap-4">
+      <div class="flex-1">
+        <label class="block font-semibold mb-1">Cari</label>
+        <input type="text" id="searchInput" class="w-full p-2 border rounded" placeholder="Cari berdasarkan nama, unit, atau jenis surat..." />
+      </div>
+      <div class="flex-1">
+        <label class="block font-semibold mb-1">Filter Status Validasi</label>
+        <select id="statusFilter" class="w-full p-2 border rounded">
+          <option value="">Semua Status</option>
+          <option value="Pending">Pending</option>
+          <option value="Approved">Approved</option>
+        </select>
+      </div>
+      <div class="flex-1">
+        <label class="block font-semibold mb-1">Filter Unit</label>
+        <select id="unitFilter" class="w-full p-2 border rounded">
+          <option value="">Semua Unit</option>
+        </select>
+      </div>
+      <div class="flex-1">
+        <label class="block font-semibold mb-1">Filter Jenis Surat</label>
+        <select id="jenisFilter" class="w-full p-2 border rounded">
+          <option value="">Semua Jenis Surat</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loading" class="hidden text-center mb-4">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-600"></div>
+      <span class="ml-2 text-gray-600">Memuat data...</span>
+    </div>
+
+    <!-- Tabel -->
+    <div class="overflow-x-auto">
+      <table id="dataTable" class="w-full border-collapse">
+        <thead>
+          <tr class="bg-gray-200">
+            <th class="p-3 text-left font-semibold">Nama Pengirim</th>
+            <th class="p-3 text-left font-semibold">Unit</th>
+            <th class="p-3 text-left font-semibold">Jenis Surat</th>
+            <th class="p-3 text-left font-semibold">Status Validasi</th>
+            <th class="p-3 text-left font-semibold">Link Surat PDF</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="mt-4 flex items-center justify-between">
+      <button id="prevBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:bg-gray-400" disabled>Previous</button>
+      <div id="pageInfo" class="text-gray-600"></div>
+      <button id="nextBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:bg-gray-400" disabled>Next</button>
+    </div>
+  </div>
+
+<script>
+  // ========== KONFIG ==========
+  const WEBAPP_URL = "https://script.google.com/macros/s/AKfycby8_2x99tJ-DLU8vHCkrOIh9pujPVzl3IffU1I2BV9n4xUOb4MHM-C1UNsbQ7VePNaXAA/exec"; // Ganti dengan URL Web App Anda
+  const LIMIT = 10; // Jumlah baris per halaman
+  const DEBOUNCE_DELAY = 300; // Delay debounce untuk pencarian (ms)
+
+  // ========== Elemen ==========
+  const notice = document.getElementById("notice");
+  const searchInput = document.getElementById("searchInput");
+  const statusFilter = document.getElementById("statusFilter");
+  const unitFilter = document.getElementById("unitFilter");
+  const jenisFilter = document.getElementById("jenisFilter");
+  const tableBody = document.getElementById("tableBody");
+  const loading = document.getElementById("loading");
+  const prevBtn = document.getElementById("prevBtn");
+  const nextBtn = document.getElementById("nextBtn");
+  const pageInfo = document.getElementById("pageInfo");
+
+  // ========== State ==========
+  let allData = [];
+  let currentPage = 1;
+  let totalPages = 1;
+
+  // ========== UTIL ==========
+  function showNotice(text, ok = true) {
+    notice.textContent = text;
+    notice.classList.remove("hidden");
+    notice.classList.toggle("border-green-500", ok);
+    notice.classList.toggle("bg-green-50", ok);
+    notice.classList.toggle("text-green-700", ok);
+    notice.classList.toggle("border-red-500", !ok);
+    notice.classList.toggle("bg-red-50", !ok);
+    notice.classList.toggle("text-red-700", !ok);
+  }
+  function clearNotice() { notice.classList.add("hidden"); notice.textContent = ""; }
+
+  function toggleLoading(show) {
+    loading.classList.toggle("hidden", !show);
+    tableBody.classList.toggle("opacity-50", show);
+    prevBtn.disabled = show;
+    nextBtn.disabled = show;
+  }
+
+  // Debounce untuk pencarian
+  function debounce(func, delay) {
+    let timeoutId;
+    return function (...args) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => func.apply(null, args), delay);
+    };
+  }
+
+  // ========== DATA LOADER ==========
+  async function loadData(page = 1) {
+    toggleLoading(true);
+    try {
+      const params = new URLSearchParams({
+        action: "getData",
+        page: page,
+        limit: LIMIT
+      });
+      const res = await fetch(`${WEBAPP_URL}?${params}`);
+      const result = await res.json();
+      if (result.error) {
+        showNotice("Gagal memuat data: " + result.message, false);
+        return;
+      }
+      allData = result.data;
+      totalPages = result.totalPages || 1;
+      currentPage = page;
+      populateFilters();
+      applyFilters();
+    } catch (err) {
+      showNotice("Gagal memuat data: " + err.message, false);
+      console.error(err);
+    } finally {
+      toggleLoading(false);
+    }
+  }
+
+  function populateFilters() {
+    const units = [...new Set(allData.map(row => row.Unit))].sort();
+    unitFilter.innerHTML = '<option value="">Semua Unit</option>';
+    units.forEach(unit => {
+      const opt = document.createElement("option");
+      opt.value = unit;
+      opt.textContent = unit;
+      unitFilter.appendChild(opt);
+    });
+
+    const jenis = [...new Set(allData.map(row => row["Jenis Surat"]))].sort();
+    jenisFilter.innerHTML = '<option value="">Semua Jenis Surat</option>';
+    jenis.forEach(j => {
+      const opt = document.createElement("option");
+      opt.value = j;
+      opt.textContent = j;
+      jenisFilter.appendChild(opt);
+    });
+  }
+
+  function renderTable(data) {
+    console.log(data);
+    tableBody.innerHTML = "";
+    data.forEach(row => {
+      const tr = document.createElement("tr");
+      tr.className = "border-b";
+      tr.innerHTML = `
+        <td class="p-3">${row["Nama Pengirim"] || ""}</td>
+        <td class="p-3">${row.Unit || ""}</td>
+        <td class="p-3">${row["Jenis Surat"] || ""}</td>
+        <td class="p-3">${row["Status Validasi"] || ""}</td>
+        <td class="p-3">
+          ${row["Link Surat PDF"] ? 
+            `<a href="${row["Link Surat PDF"]}" target="_blank" class="text-blue-600 hover:underline">Lihat PDF</a>` : 
+            ""}
+        </td>
+      `;
+      tableBody.appendChild(tr);
+    });
+  }
+
+  // ========== FILTER DAN SEARCH ==========
+  function applyFilters() {
+    const searchText = searchInput.value.toLowerCase();
+    const status = statusFilter.value;
+    const unit = unitFilter.value;
+    const jenis = jenisFilter.value;
+
+    const filteredData = allData.filter(row => {
+      const matchesSearch = 
+        (row["Nama Pengirim"] || "").toLowerCase().includes(searchText) ||
+        (row.Unit || "").toLowerCase().includes(searchText) ||
+        (row["Jenis Surat"] || "").toLowerCase().includes(searchText);
+      const matchesStatus = !status || row["Status Validasi"] === status;
+      const matchesUnit = !unit || row.Unit === unit;
+      const matchesJenis = !jenis || row["Jenis Surat"] === jenis;
+      return matchesSearch && matchesStatus && matchesUnit && matchesJenis;
+    });
+
+    totalPages = Math.ceil(filteredData.length / LIMIT);
+    const startIndex = (currentPage - 1) * LIMIT;
+    const paginatedData = filteredData.slice(startIndex, startIndex + LIMIT);
+
+    renderTable(paginatedData);
+    updatePagination();
+  }
+
+  function updatePagination() {
+    prevBtn.disabled = currentPage === 1;
+    nextBtn.disabled = currentPage === totalPages;
+    pageInfo.textContent = `Halaman ${currentPage} dari ${totalPages}`;
+  }
+
+  // ========== EVENTS ==========
+  const debouncedApplyFilters = debounce(applyFilters, DEBOUNCE_DELAY);
+
+  searchInput.addEventListener("input", debouncedApplyFilters);
+  statusFilter.addEventListener("change", applyFilters);
+  unitFilter.addEventListener("change", applyFilters);
+  jenisFilter.addEventListener("change", applyFilters);
+
+  prevBtn.addEventListener("click", () => {
+    if (currentPage > 1) {
+      currentPage--;
+      applyFilters();
+    }
+  });
+
+  nextBtn.addEventListener("click", () => {
+    if (currentPage < totalPages) {
+      currentPage++;
+      applyFilters();
+    }
+  });
+
+  // INIT
+  (async () => {
+    clearNotice();
+    toggleLoading(true);
+    try {
+      await loadData();
+    } catch (err) {
+      showNotice("Gagal memuat data. Cek Web App & akses.", false);
+      console.error(err);
+    } finally {
+      toggleLoading(false);
+    }
+  })();
+</script>
+</body>
+</html>
